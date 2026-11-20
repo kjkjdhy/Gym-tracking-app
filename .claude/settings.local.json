@@ -3,7 +3,8 @@
     "allow": [
       "Bash(npm install:*)",
       "Bash(npm run:*)",
-      "Bash(npx pwa-assets-generator:*)"
+      "Bash(npx pwa-assets-generator:*)",
+      "WebSearch"
     ]
   }
 }

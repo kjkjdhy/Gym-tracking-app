@@ -49,11 +49,11 @@ export default function SettingsPage() {
     <div className="p-4 space-y-6">
       <h1 className="text-xl font-bold text-zinc-100">设置</h1>
 
-      {/* Groq API Key */}
+      {/* Gemini API Key */}
       <div className="space-y-2">
-        <h2 className="font-semibold text-zinc-200">Groq API Key</h2>
+        <h2 className="font-semibold text-zinc-200">Gemini API Key</h2>
         <p className="text-sm text-zinc-500">
-          前往 <span className="text-orange-400">console.groq.com</span> 免费注册获取
+          前往 <span className="text-orange-400">Google AI Studio</span> 免费注册获取
         </p>
         <input
           type="password"

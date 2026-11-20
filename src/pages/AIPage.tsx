@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '../db'
-import Groq from 'groq-sdk'
+import { GoogleGenerativeAI } from '@google/generative-ai'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -21,7 +21,7 @@ function lastYearStart(): string {
 }
 
 function monthOf(date: string): string {
-  return date.slice(0, 7) // "YYYY-MM"
+  return date.slice(0, 7)
 }
 
 function yearOf(date: string): string {
@@ -39,7 +39,6 @@ async function buildSystemPrompt(): Promise<string> {
     ? await db.workoutPlans.get(settings.activePlanId)
     : null
 
-  // 分层读取总结
   const recentWeeklySummaries = await db.aiSummaries
     .where('type').equals('weekly')
     .reverse().sortBy('periodStart')
@@ -93,7 +92,7 @@ ${latestYearlySummary ? `=== 最新年总结（${yearOf(latestYearlySummary.peri
 
 // --- 自动生成月/年总结 ---
 async function checkAndGenerateAutoSummaries(apiKey: string): Promise<void> {
-  const groq = new Groq({ apiKey, dangerouslyAllowBrowser: true })
+  const genAI = new GoogleGenerativeAI(apiKey)
 
   // 检查上个月是否有月总结
   const lms = lastMonthStart()
@@ -104,13 +103,10 @@ async function checkAndGenerateAutoSummaries(apiKey: string): Promise<void> {
     .first()
 
   if (!existingMonthly) {
-    // 取上个月的周总结
     const monthlyWeeklies = await db.aiSummaries
       .where('type').equals('weekly')
       .filter(s => monthOf(s.periodStart) === lmsMonth)
       .toArray()
-
-    // 或者取上个月的训练记录
     const monthlyLogs = await db.workoutLogs
       .filter(l => monthOf(l.date) === lmsMonth)
       .toArray()
@@ -124,15 +120,12 @@ async function checkAndGenerateAutoSummaries(apiKey: string): Promise<void> {
             ).join('; ')
           ).join('\n')
 
-      const response = await groq.chat.completions.create({
-        model: 'llama-3.1-8b-instant',
-        messages: [
-          { role: 'system', content: '你是专业健身教练，请根据提供的训练数据生成月度总结，包括：本月整体训练情况、主要进步、不足之处、下月建议。用中文回答，简洁清晰。' },
-          { role: 'user', content: sourceText },
-        ],
-        max_tokens: 1000,
+      const model = genAI.getGenerativeModel({
+        model: 'gemini-2.0-flash',
+        systemInstruction: '你是专业健身教练，请根据提供的训练数据生成月度总结，包括：本月整体训练情况、主要进步、不足之处、下月建议。用中文回答，简洁清晰。',
       })
-      const content = response.choices[0]?.message?.content ?? ''
+      const result = await model.generateContent(sourceText)
+      const content = result.response.text()
       if (content) {
         await db.aiSummaries.add({ type: 'monthly', periodStart: lms, content, createdAt: Date.now() })
       }
@@ -157,15 +150,12 @@ async function checkAndGenerateAutoSummaries(apiKey: string): Promise<void> {
       const sourceText = `以下是${lysYear}年的月总结：\n\n` +
         yearlyMonthlies.map(s => `[${monthOf(s.periodStart)}]\n${s.content}`).join('\n\n---\n\n')
 
-      const response = await groq.chat.completions.create({
-        model: 'llama-3.1-8b-instant',
-        messages: [
-          { role: 'system', content: '你是专业健身教练，请根据提供的月度总结生成年度健身总结，包括：全年训练概览、最大进步、关键里程碑、明年目标建议。用中文回答，重点突出。' },
-          { role: 'user', content: sourceText },
-        ],
-        max_tokens: 1200,
+      const model = genAI.getGenerativeModel({
+        model: 'gemini-2.0-flash',
+        systemInstruction: '你是专业健身教练，请根据提供的月度总结生成年度健身总结，包括：全年训练概览、最大进步、关键里程碑、明年目标建议。用中文回答，重点突出。',
       })
-      const content = response.choices[0]?.message?.content ?? ''
+      const result = await model.generateContent(sourceText)
+      const content = result.response.text()
       if (content) {
         await db.aiSummaries.add({ type: 'yearly', periodStart: lys, content, createdAt: Date.now() })
       }
@@ -187,12 +177,10 @@ export default function AIPage() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  // 页面加载时自动检查并生成月/年总结
   useEffect(() => {
     const apiKey = settings?.groqApiKey
     if (!apiKey || hasCheckedRef.current) return
     hasCheckedRef.current = true
-
     setAutoSummaryStatus('检查总结...')
     checkAndGenerateAutoSummaries(apiKey)
       .then(() => setAutoSummaryStatus(''))
@@ -202,7 +190,7 @@ export default function AIPage() {
   async function sendMessage() {
     if (!input.trim() || loading) return
     const apiKey = settings?.groqApiKey
-    if (!apiKey) { setError('请先在设置中填入 Groq API Key'); return }
+    if (!apiKey) { setError('请先在设置中填入 Gemini API Key'); return }
 
     const userMsg: Message = { role: 'user', content: input.trim() }
     const newMessages = [...messages, userMsg]
@@ -213,19 +201,23 @@ export default function AIPage() {
 
     try {
       const systemPrompt = await buildSystemPrompt()
-      const groq = new Groq({ apiKey, dangerouslyAllowBrowser: true })
-      const response = await groq.chat.completions.create({
-        model: 'llama-3.1-8b-instant',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          ...newMessages.map(m => ({ role: m.role, content: m.content })),
-        ],
-        max_tokens: 1024,
+      const genAI = new GoogleGenerativeAI(apiKey)
+      const model = genAI.getGenerativeModel({
+        model: 'gemini-2.0-flash',
+        systemInstruction: systemPrompt,
       })
-      setMessages([...newMessages, {
-        role: 'assistant',
-        content: response.choices[0]?.message?.content ?? '没有收到回复',
-      }])
+
+      // 转换历史消息格式（Gemini 用 'model' 而非 'assistant'）
+      const history = newMessages.slice(0, -1).map(m => ({
+        role: m.role === 'user' ? 'user' as const : 'model' as const,
+        parts: [{ text: m.content }],
+      }))
+
+      const chat = model.startChat({ history })
+      const result = await chat.sendMessage(userMsg.content)
+      const content = result.response.text()
+
+      setMessages([...newMessages, { role: 'assistant', content }])
     } catch {
       setError('请求失败，请检查 API Key 或网络连接')
     } finally {
@@ -235,22 +227,21 @@ export default function AIPage() {
 
   async function generateWeeklySummary() {
     const apiKey = settings?.groqApiKey
-    if (!apiKey) { setError('请先填入 Groq API Key'); return }
+    if (!apiKey) { setError('请先填入 Gemini API Key'); return }
 
     setLoading(true)
     setError('')
     try {
       const systemPrompt = await buildSystemPrompt()
-      const groq = new Groq({ apiKey, dangerouslyAllowBrowser: true })
-      const response = await groq.chat.completions.create({
-        model: 'llama-3.1-8b-instant',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: '请对我最近的训练做一个详细周总结，包括：训练频率、各项目的进步情况、优缺点分析，以及下周的训练建议。' },
-        ],
-        max_tokens: 1500,
+      const genAI = new GoogleGenerativeAI(apiKey)
+      const model = genAI.getGenerativeModel({
+        model: 'gemini-2.0-flash',
+        systemInstruction: systemPrompt,
       })
-      const content = response.choices[0]?.message?.content ?? ''
+      const result = await model.generateContent(
+        '请对我最近的训练做一个详细周总结，包括：训练频率、各项目的进步情况、优缺点分析，以及下周的训练建议。'
+      )
+      const content = result.response.text()
       const periodStart = new Date().toISOString().slice(0, 10)
       await db.aiSummaries.add({ type: 'weekly', periodStart, content, createdAt: Date.now() })
       setMessages(prev => [...prev, { role: 'assistant', content: `周总结（${periodStart}）\n\n${content}` }])
