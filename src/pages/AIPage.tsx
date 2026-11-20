@@ -1,7 +1,9 @@
 import { useState, useRef, useEffect } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '../db'
-import { GoogleGenerativeAI } from '@google/generative-ai'
+import { GoogleGenAI } from '@google/genai'
+
+const MODEL = 'gemini-3.8-flash'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -92,9 +94,8 @@ ${latestYearlySummary ? `=== 最新年总结（${yearOf(latestYearlySummary.peri
 
 // --- 自动生成月/年总结 ---
 async function checkAndGenerateAutoSummaries(apiKey: string): Promise<void> {
-  const genAI = new GoogleGenerativeAI(apiKey)
+  const ai = new GoogleGenAI({ apiKey })
 
-  // 检查上个月是否有月总结
   const lms = lastMonthStart()
   const lmsMonth = monthOf(lms)
   const existingMonthly = await db.aiSummaries
@@ -120,19 +121,18 @@ async function checkAndGenerateAutoSummaries(apiKey: string): Promise<void> {
             ).join('; ')
           ).join('\n')
 
-      const model = genAI.getGenerativeModel({
-        model: 'gemini-1.5-flash',
-        systemInstruction: '你是专业健身教练，请根据提供的训练数据生成月度总结，包括：本月整体训练情况、主要进步、不足之处、下月建议。用中文回答，简洁清晰。',
+      const response = await ai.models.generateContent({
+        model: MODEL,
+        contents: sourceText,
+        config: { systemInstruction: '你是专业健身教练，请根据提供的训练数据生成月度总结，包括：本月整体训练情况、主要进步、不足之处、下月建议。用中文回答，简洁清晰。' },
       })
-      const result = await model.generateContent(sourceText)
-      const content = result.response.text()
+      const content = response.text ?? ''
       if (content) {
         await db.aiSummaries.add({ type: 'monthly', periodStart: lms, content, createdAt: Date.now() })
       }
     }
   }
 
-  // 检查上一年是否有年总结
   const lys = lastYearStart()
   const lysYear = yearOf(lys)
   const existingYearly = await db.aiSummaries
@@ -150,12 +150,12 @@ async function checkAndGenerateAutoSummaries(apiKey: string): Promise<void> {
       const sourceText = `以下是${lysYear}年的月总结：\n\n` +
         yearlyMonthlies.map(s => `[${monthOf(s.periodStart)}]\n${s.content}`).join('\n\n---\n\n')
 
-      const model = genAI.getGenerativeModel({
-        model: 'gemini-1.5-flash',
-        systemInstruction: '你是专业健身教练，请根据提供的月度总结生成年度健身总结，包括：全年训练概览、最大进步、关键里程碑、明年目标建议。用中文回答，重点突出。',
+      const response = await ai.models.generateContent({
+        model: MODEL,
+        contents: sourceText,
+        config: { systemInstruction: '你是专业健身教练，请根据提供的月度总结生成年度健身总结，包括：全年训练概览、最大进步、关键里程碑、明年目标建议。用中文回答，重点突出。' },
       })
-      const result = await model.generateContent(sourceText)
-      const content = result.response.text()
+      const content = response.text ?? ''
       if (content) {
         await db.aiSummaries.add({ type: 'yearly', periodStart: lys, content, createdAt: Date.now() })
       }
@@ -201,26 +201,25 @@ export default function AIPage() {
 
     try {
       const systemPrompt = await buildSystemPrompt()
-      const genAI = new GoogleGenerativeAI(apiKey)
-      const model = genAI.getGenerativeModel({
-        model: 'gemini-1.5-flash',
-        systemInstruction: systemPrompt,
-      })
+      const ai = new GoogleGenAI({ apiKey })
 
-      // 转换历史消息格式（Gemini 用 'model' 而非 'assistant'）
       const history = newMessages.slice(0, -1).map(m => ({
         role: m.role === 'user' ? 'user' as const : 'model' as const,
         parts: [{ text: m.content }],
       }))
 
-      const chat = model.startChat({ history })
-      const result = await Promise.race([
-        chat.sendMessage(userMsg.content),
+      const chat = ai.chats.create({
+        model: MODEL,
+        config: { systemInstruction: systemPrompt },
+        history,
+      })
+
+      const response = await Promise.race([
+        chat.sendMessage({ message: userMsg.content }),
         new Promise<never>((_, reject) => setTimeout(() => reject(new Error('请求超时，请重试')), 30000)),
       ])
-      const content = result.response.text()
 
-      setMessages([...newMessages, { role: 'assistant', content }])
+      setMessages([...newMessages, { role: 'assistant', content: response.text ?? '' }])
     } catch (e) {
       setError(`请求失败: ${e instanceof Error ? e.message : String(e)}`)
     } finally {
@@ -236,20 +235,18 @@ export default function AIPage() {
     setError('')
     try {
       const systemPrompt = await buildSystemPrompt()
-      const genAI = new GoogleGenerativeAI(apiKey)
-      const model = genAI.getGenerativeModel({
-        model: 'gemini-1.5-flash',
-        systemInstruction: systemPrompt,
+      const ai = new GoogleGenAI({ apiKey })
+      const response = await ai.models.generateContent({
+        model: MODEL,
+        contents: '请对我最近的训练做一个详细周总结，包括：训练频率、各项目的进步情况、优缺点分析，以及下周的训练建议。',
+        config: { systemInstruction: systemPrompt },
       })
-      const result = await model.generateContent(
-        '请对我最近的训练做一个详细周总结，包括：训练频率、各项目的进步情况、优缺点分析，以及下周的训练建议。'
-      )
-      const content = result.response.text()
+      const content = response.text ?? ''
       const periodStart = new Date().toISOString().slice(0, 10)
       await db.aiSummaries.add({ type: 'weekly', periodStart, content, createdAt: Date.now() })
       setMessages(prev => [...prev, { role: 'assistant', content: `周总结（${periodStart}）\n\n${content}` }])
-    } catch {
-      setError('生成总结失败，请检查网络')
+    } catch (e) {
+      setError(`生成总结失败: ${e instanceof Error ? e.message : String(e)}`)
     } finally {
       setLoading(false)
     }
