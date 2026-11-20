@@ -6,4 +6,5 @@
 
 body {
   overscroll-behavior: none;
+  padding-top: env(safe-area-inset-top);
 }
