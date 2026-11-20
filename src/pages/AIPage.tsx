@@ -218,8 +218,8 @@ export default function AIPage() {
       const content = result.response.text()
 
       setMessages([...newMessages, { role: 'assistant', content }])
-    } catch {
-      setError('请求失败，请检查 API Key 或网络连接')
+    } catch (e) {
+      setError(`请求失败: ${e instanceof Error ? e.message : String(e)}`)
     } finally {
       setLoading(false)
     }
