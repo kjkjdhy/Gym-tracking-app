@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { db } from '../db'
 import type { ExerciseSet, SetRecord } from '../db'
+import { syncToGitHub } from '../lib/github-sync'
 
 function today() {
   return new Date().toISOString().slice(0, 10)
@@ -63,6 +64,15 @@ export default function LogPage() {
     setTimeout(() => setSaved(false), 2000)
     setExercises([])
     setNote('')
+
+    // 后台自动同步到 GitHub（不阻塞 UI）
+    db.settings.orderBy('id').first().then(s => {
+      if (s?.githubToken) {
+        syncToGitHub(s.githubToken)
+          .then(() => db.settings.update(s.id!, { lastSyncAt: Date.now() }))
+          .catch(() => {}) // 静默失败，不打扰用户
+      }
+    })
   }
 
   return (

@@ -51,8 +51,10 @@ export interface AISummary {
 export interface Settings {
   id?: number
   groqApiKey: string
+  githubToken?: string
   activePlanId?: number
   weightUnit: 'kg' | 'lbs'
+  lastSyncAt?: number
 }
 
 class GymDB extends Dexie {
