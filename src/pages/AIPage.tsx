@@ -121,7 +121,7 @@ async function checkAndGenerateAutoSummaries(apiKey: string): Promise<void> {
           ).join('\n')
 
       const model = genAI.getGenerativeModel({
-        model: 'gemini-2.0-flash',
+        model: 'gemini-1.5-flash',
         systemInstruction: '你是专业健身教练，请根据提供的训练数据生成月度总结，包括：本月整体训练情况、主要进步、不足之处、下月建议。用中文回答，简洁清晰。',
       })
       const result = await model.generateContent(sourceText)
@@ -151,7 +151,7 @@ async function checkAndGenerateAutoSummaries(apiKey: string): Promise<void> {
         yearlyMonthlies.map(s => `[${monthOf(s.periodStart)}]\n${s.content}`).join('\n\n---\n\n')
 
       const model = genAI.getGenerativeModel({
-        model: 'gemini-2.0-flash',
+        model: 'gemini-1.5-flash',
         systemInstruction: '你是专业健身教练，请根据提供的月度总结生成年度健身总结，包括：全年训练概览、最大进步、关键里程碑、明年目标建议。用中文回答，重点突出。',
       })
       const result = await model.generateContent(sourceText)
@@ -203,7 +203,7 @@ export default function AIPage() {
       const systemPrompt = await buildSystemPrompt()
       const genAI = new GoogleGenerativeAI(apiKey)
       const model = genAI.getGenerativeModel({
-        model: 'gemini-2.0-flash',
+        model: 'gemini-1.5-flash',
         systemInstruction: systemPrompt,
       })
 
@@ -214,7 +214,10 @@ export default function AIPage() {
       }))
 
       const chat = model.startChat({ history })
-      const result = await chat.sendMessage(userMsg.content)
+      const result = await Promise.race([
+        chat.sendMessage(userMsg.content),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('请求超时，请重试')), 30000)),
+      ])
       const content = result.response.text()
 
       setMessages([...newMessages, { role: 'assistant', content }])
@@ -235,7 +238,7 @@ export default function AIPage() {
       const systemPrompt = await buildSystemPrompt()
       const genAI = new GoogleGenerativeAI(apiKey)
       const model = genAI.getGenerativeModel({
-        model: 'gemini-2.0-flash',
+        model: 'gemini-1.5-flash',
         systemInstruction: systemPrompt,
       })
       const result = await model.generateContent(
