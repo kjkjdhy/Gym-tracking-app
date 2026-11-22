@@ -19,7 +19,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('log')
 
   return (
-    <div className="flex flex-col h-screen bg-zinc-950 text-zinc-100 max-w-lg mx-auto">
+    <div className="flex flex-col h-screen bg-black text-white max-w-lg mx-auto">
       <main className="flex-1 overflow-y-auto">
         {activeTab === 'log' && <LogPage />}
         {activeTab === 'plan' && <PlanPage />}
@@ -28,7 +28,7 @@ export default function App() {
         {activeTab === 'settings' && <SettingsPage />}
       </main>
 
-      <nav className="flex border-t border-zinc-800 bg-zinc-900 pb-safe">
+      <nav className="flex border-t border-white/5 bg-zinc-950 pb-safe">
         {tabs.map((tab) => (
           <button
             key={tab.id}
