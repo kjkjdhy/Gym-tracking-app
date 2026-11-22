@@ -15,8 +15,9 @@ export interface ExerciseSet {
 
 export interface SetRecord {
   reps: number
-  weight: number // kg
+  weight: number
   unit: 'kg' | 'lbs'
+  done?: boolean
 }
 
 export interface WorkoutPlan {
