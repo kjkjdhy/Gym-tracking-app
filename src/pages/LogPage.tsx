@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { db } from '../db'
-import type { ExerciseSet } from '../db'
+import type { ExerciseSet, WorkoutPlan } from '../db'
 import { syncToGitHub } from '../lib/github-sync'
 import ExercisePicker from '../components/ExercisePicker'
 
@@ -38,9 +38,18 @@ export default function LogPage() {
   const [saved, setSaved] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const [showPicker, setShowPicker] = useState(false)
+  const [activePlan, setActivePlan] = useState<WorkoutPlan | null>(null)
+  const [selectedDayIndex, setSelectedDayIndex] = useState<number | null>(null)
 
   useEffect(() => {
     async function init() {
+      // 加载活跃计划
+      const settings = await db.settings.orderBy('id').first()
+      if (settings?.activePlanId) {
+        const plan = await db.workoutPlans.get(settings.activePlanId)
+        if (plan) setActivePlan(plan)
+      }
+
       const draft = loadDraft()
       if (draft) {
         setDate(draft.date); setExercises(draft.exercises)
@@ -54,13 +63,44 @@ export default function LogPage() {
         const u = existing.exercises[0]?.sets[0]?.unit
         if (u) setUnit(u)
       } else {
-        const s = await db.settings.orderBy('id').first()
-        if (s?.weightUnit) setUnit(s.weightUnit)
+        if (settings?.weightUnit) setUnit(settings.weightUnit)
       }
       setLoaded(true)
     }
     init()
   }, [])
+
+  // 选择训练日：从计划加载动作，并带入上次重量
+  async function loadPlanDay(dayIndex: number) {
+    if (!activePlan) return
+    const day = activePlan.days[dayIndex]
+    if (!day) return
+    setSelectedDayIndex(dayIndex)
+
+    const newExercises: ExerciseSet[] = await Promise.all(
+      day.exercises.map(async (planEx) => {
+        // 查找该动作的上次使用重量
+        const recentLogs = await db.workoutLogs.orderBy('date').reverse().limit(30).toArray()
+        let lastWeight = 0
+        for (const log of recentLogs) {
+          const found = log.exercises.find(e => e.exerciseName === planEx.name)
+          if (found && found.sets.length > 0) {
+            lastWeight = found.sets[0].weight
+            break
+          }
+        }
+
+        const sets = Array.from({ length: planEx.targetSets }, () => ({
+          reps: 0,
+          weight: lastWeight,
+          unit,
+          done: false,
+        }))
+        return { exerciseName: planEx.name, sets }
+      })
+    )
+    setExercises(newExercises)
+  }
 
   useEffect(() => {
     if (!loaded) return
@@ -161,6 +201,20 @@ export default function LogPage() {
             ))}
           </div>
         </div>
+
+        {/* 训练日选择 */}
+        {activePlan && activePlan.days.length > 0 && (
+          <div className="flex gap-2 overflow-x-auto scrollbar-none -mx-4 px-4">
+            {activePlan.days.map((day, i) => (
+              <button key={i} onClick={() => loadPlanDay(i)}
+                className={`flex-shrink-0 px-4 py-2 rounded-xl text-sm font-bold transition-colors ${
+                  selectedDayIndex === i ? 'bg-orange-500 text-white' : 'bg-zinc-950 text-zinc-400 border border-white/5'
+                }`}>
+                {day.dayLabel}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* 日期 */}
         <input
