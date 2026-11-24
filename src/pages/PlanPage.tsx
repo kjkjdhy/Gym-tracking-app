@@ -2,6 +2,22 @@ import { useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '../db'
 import type { WorkoutPlan, PlanDay, PlanExercise } from '../db'
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core'
+import {
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+  arrayMove,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 
 function newPlan(): Omit<WorkoutPlan, 'id'> {
   return { name: '', days: [], createdAt: Date.now(), updatedAt: Date.now() }
@@ -183,6 +199,61 @@ export default function PlanPage() {
   )
 }
 
+function SortableExerciseItem({
+  id, ex, di, ei, onUpdate, onRemove,
+}: {
+  id: string
+  ex: PlanExercise
+  di: number
+  ei: number
+  onUpdate: (di: number, ei: number, ex: PlanExercise) => void
+  onRemove: (di: number, ei: number) => void
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  }
+  return (
+    <div ref={setNodeRef} style={style} className="bg-zinc-800 rounded-lg p-3 space-y-2">
+      <div className="flex gap-2 items-center">
+        <button {...attributes} {...listeners} className="text-zinc-600 hover:text-zinc-400 cursor-grab active:cursor-grabbing px-1 touch-none">
+          ⠿
+        </button>
+        <input
+          type="text"
+          placeholder="动作名称"
+          value={ex.name}
+          onChange={(e) => onUpdate(di, ei, { ...ex, name: e.target.value })}
+          className="flex-1 bg-zinc-700 rounded px-2 py-1.5 text-zinc-100 placeholder-zinc-500 text-sm focus:outline-none focus:ring-1 focus:ring-orange-500"
+        />
+        <button onClick={() => onRemove(di, ei)} className="text-zinc-500 hover:text-red-400 text-xs">✕</button>
+      </div>
+      <div className="flex gap-2">
+        <div className="flex-1">
+          <label className="text-xs text-zinc-500">目标组数</label>
+          <input type="number" value={ex.targetSets}
+            onChange={(e) => onUpdate(di, ei, { ...ex, targetSets: Number(e.target.value) })}
+            className="w-full bg-zinc-700 rounded px-2 py-1.5 text-zinc-100 text-sm focus:outline-none focus:ring-1 focus:ring-orange-500" />
+        </div>
+        <div className="flex-1">
+          <label className="text-xs text-zinc-500">目标次数</label>
+          <input type="text" value={ex.targetReps} placeholder="8-12"
+            onChange={(e) => onUpdate(di, ei, { ...ex, targetReps: e.target.value })}
+            className="w-full bg-zinc-700 rounded px-2 py-1.5 text-zinc-100 text-sm focus:outline-none focus:ring-1 focus:ring-orange-500" />
+        </div>
+        <div className="flex-1">
+          <label className="text-xs text-zinc-500">目标重量</label>
+          <input type="number" value={ex.targetWeight ?? ''} placeholder="kg"
+            onChange={(e) => onUpdate(di, ei, { ...ex, targetWeight: e.target.value ? Number(e.target.value) : undefined })}
+            className="w-full bg-zinc-700 rounded px-2 py-1.5 text-zinc-100 text-sm focus:outline-none focus:ring-1 focus:ring-orange-500" />
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function PlanEditor({
   plan,
   onChange,
@@ -195,6 +266,10 @@ function PlanEditor({
   onCancel: () => void
 }) {
   const [expandedDays, setExpandedDays] = useState<Set<number>>(new Set([0]))
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
+  )
 
   function toggleDay(di: number) {
     setExpandedDays(prev => {
@@ -240,6 +315,18 @@ function PlanEditor({
     onChange({ ...plan, days })
   }
 
+  function handleDragEnd(di: number, event: DragEndEvent) {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const exercises = plan.days[di].exercises
+    const oldIndex = exercises.findIndex((_, i) => `${di}-${i}` === active.id)
+    const newIndex = exercises.findIndex((_, i) => `${di}-${i}` === over.id)
+    if (oldIndex === -1 || newIndex === -1) return
+    const days = [...plan.days]
+    days[di] = { ...days[di], exercises: arrayMove(exercises, oldIndex, newIndex) }
+    onChange({ ...plan, days })
+  }
+
   return (
     <div className="p-4 space-y-4">
       <div className="flex items-center gap-2">
@@ -278,40 +365,19 @@ function PlanEditor({
 
             {isExpanded && (
               <div className="border-t border-zinc-800 p-3 space-y-2">
-                {day.exercises.map((ex, ei) => (
-                  <div key={ei} className="bg-zinc-800 rounded-lg p-3 space-y-2">
-                    <div className="flex gap-2 items-center">
-                      <input
-                        type="text"
-                        placeholder="动作名称"
-                        value={ex.name}
-                        onChange={(e) => updateExercise(di, ei, { ...ex, name: e.target.value })}
-                        className="flex-1 bg-zinc-700 rounded px-2 py-1.5 text-zinc-100 placeholder-zinc-500 text-sm focus:outline-none focus:ring-1 focus:ring-orange-500"
+                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={(e) => handleDragEnd(di, e)}>
+                  <SortableContext items={day.exercises.map((_, ei) => `${di}-${ei}`)} strategy={verticalListSortingStrategy}>
+                    {day.exercises.map((ex, ei) => (
+                      <SortableExerciseItem
+                        key={`${di}-${ei}`}
+                        id={`${di}-${ei}`}
+                        ex={ex} di={di} ei={ei}
+                        onUpdate={updateExercise}
+                        onRemove={removeExercise}
                       />
-                      <button onClick={() => removeExercise(di, ei)} className="text-zinc-500 hover:text-red-400 text-xs">✕</button>
-                    </div>
-                    <div className="flex gap-2">
-                      <div className="flex-1">
-                        <label className="text-xs text-zinc-500">目标组数</label>
-                        <input type="number" value={ex.targetSets}
-                          onChange={(e) => updateExercise(di, ei, { ...ex, targetSets: Number(e.target.value) })}
-                          className="w-full bg-zinc-700 rounded px-2 py-1.5 text-zinc-100 text-sm focus:outline-none focus:ring-1 focus:ring-orange-500" />
-                      </div>
-                      <div className="flex-1">
-                        <label className="text-xs text-zinc-500">目标次数</label>
-                        <input type="text" value={ex.targetReps} placeholder="8-12"
-                          onChange={(e) => updateExercise(di, ei, { ...ex, targetReps: e.target.value })}
-                          className="w-full bg-zinc-700 rounded px-2 py-1.5 text-zinc-100 text-sm focus:outline-none focus:ring-1 focus:ring-orange-500" />
-                      </div>
-                      <div className="flex-1">
-                        <label className="text-xs text-zinc-500">目标重量</label>
-                        <input type="number" value={ex.targetWeight ?? ''} placeholder="kg"
-                          onChange={(e) => updateExercise(di, ei, { ...ex, targetWeight: e.target.value ? Number(e.target.value) : undefined })}
-                          className="w-full bg-zinc-700 rounded px-2 py-1.5 text-zinc-100 text-sm focus:outline-none focus:ring-1 focus:ring-orange-500" />
-                      </div>
-                    </div>
-                  </div>
-                ))}
+                    ))}
+                  </SortableContext>
+                </DndContext>
                 <button onClick={() => addExercise(di)} className="text-sm text-orange-400 hover:text-orange-300">
                   + 添加动作
                 </button>
